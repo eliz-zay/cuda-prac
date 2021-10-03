@@ -16,23 +16,16 @@
 
 using namespace std;
 
-vector<string> listdir(const char *name, int indent) {
-    DIR *dir;
-    struct dirent *entry;
+vector<string> listDir(const char* name) {
+    DIR* dir;
+    struct dirent* entry;
     vector<string> files;
 
     if (!(dir = opendir(name)))
         return files;
 
     while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_type == DT_DIR) {
-            char path[1024];
-            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-                continue;
-            snprintf(path, sizeof(path), "%s/%s", name, entry->d_name);
-            files.push_back(entry->d_name);
-            listdir(path, indent + 2);
-        } else {
+        if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) {
             files.push_back(entry->d_name);
         }
     }
@@ -325,7 +318,7 @@ int main(int argc, char** argv) {
         images.push_back({ "in/big.png", "out/big.png" });
 
     } else if (!strcmp(imgType,"small")) {
-        vector<string> files = listdir("in/small/", 0);
+        vector<string> files = listDir("in/small/");
         for (string name: files) {
             string strIn = "in/small/" + name;
             string strOut = "out/" + name;
