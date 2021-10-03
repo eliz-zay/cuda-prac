@@ -16,6 +16,9 @@
 
 using namespace std;
 
+int maxGridDimX;
+int maxGridDimY;
+
 vector<string> listDir(const char* name) {
     DIR* dir;
     struct dirent* entry;
@@ -34,71 +37,25 @@ vector<string> listDir(const char* name) {
     return files;
 }
 
-const map<string, pair<char, float* > > kernels {
-    {
-        "box-blur",
-        {
-            3,
-            new float[9] {
-                1.0/9, 1.0/9, 1.0/9,
-                1.0/9, 1.0/9, 1.0/9,
-                1.0/9, 1.0/9, 1.0/9
-            }
-        }
+vector<vector<float> > kernels = {
+    vector<float> { // gaussian 3x3
+        1.0/16, 2.0/16, 1.0/16,
+        2.0/16, 4.0/16, 2.0/16,
+        1.0/16, 2.0/16, 1.0/16
     },
-    {
-        "gaussian-blur-3",
-        {
-            3,
-            new float[9] {
-                1.0/16, 2.0/16, 1.0/16,
-                2.0/16, 4.0/16, 2.0/16,
-                1.0/16, 2.0/16, 1.0/16
-            }
-        }
+    vector<float> { // gaussian 5x5
+        1.0/256, 4.0/256,   6.0/256,  4.0/256, 1.0/256,
+        4.0/256, 16.0/256, 24.0/256, 16.0/256, 4.0/256,
+        6.0/256, 24.0/256, 36.0/256, 24.0/256, 6.0/256,
+        4.0/256, 16.0/256, 24.0/256, 16.0/256, 4.0/256,
+        1.0/256, 4.0/256,   6.0/256,  4.0/256, 1.0/256
     },
-    {
-        "gaussian-blur-5",
-        {
-            5,
-            new float[25] {
-                1.0/256, 4.0/256,   6.0/256,  4.0/256, 1.0/256,
-                4.0/256, 16.0/256, 24.0/256, 16.0/256, 4.0/256,
-                6.0/256, 24.0/256, 36.0/256, 24.0/256, 6.0/256,
-                4.0/256, 16.0/256, 24.0/256, 16.0/256, 4.0/256,
-                1.0/256, 4.0/256,   6.0/256,  4.0/256, 1.0/256
-            }
-        }
-    },
-    {
-        "edge-detect",
-        {
-            3,
-            new float[9] {
-                -1, -1, -1,
-                -1,  8, -1,
-                -1, -1, -1
-            }
-        }
-    },
-    {
-        "emboss",
-        {
-            3,
-            new float[9] {
-                -2, -1, 0,
-                -1,  1, 1,
-                 0,  1, 2
-            }
-        }
+    vector<float> { // edge detect 3x3
+        -1, -1, -1,
+        -1,  8, -1,
+        -1, -1, -1
     }
 };
-
-int maxBlockSize;
-int maxBlockDimX;
-int maxBlockDimY;
-int maxGridDimX;
-int maxGridDimY;
 
 void getError(cudaError_t err) {
     if (err != cudaSuccess) {
@@ -121,18 +78,9 @@ __global__ void apply_kernel_device(
         return;
     }
 
-    float r;
-    float g;
-    float b;
+    float r = 0, g = 0, b = 0;
 
-    /**
-     * Case when kernel dimension is 3. In this case process all pixels but first edge
-     */
     if (kernel_dim == 3 && linearX > 0 && linearX < width - 1 && linearY > 0 && linearY < height - 1) {
-        r = 0;
-        g = 0;
-        b = 0;
-
         for (int i = -1; i < 2; i++) {
             for (int j = -1; j < 2; j++) {
                 r += input_image[3 * ((linearY + i) * width + (linearX + j))] * kernel[3 * (i + 1) + j + 1];
@@ -144,15 +92,8 @@ __global__ void apply_kernel_device(
         output_image[3 * (linearY * width + linearX)] = ceil(r);
         output_image[3 * (linearY * width + linearX) + 1] = ceil(g);
         output_image[3 * (linearY * width + linearX) + 2] = ceil(b);
-    }
-    /**
-     * Case when kernel dimension is 5. In this case process all pixels but first two edges
-     */
-    else if ((kernel_dim == 5 && linearX > 1 && linearX < width - 2 && linearY > 2 && linearY < height - 2)) {
-        r = 0;
-        g = 0;
-        b = 0;
 
+    } else if ((kernel_dim == 5 && linearX > 1 && linearX < width - 2 && linearY > 2 && linearY < height - 2)) {
         for (int i = -2; i < 3; i++) {
             for (int j = -2; j < 3; j++) {
                 r += input_image[3 * ((linearY + i) * width + (linearX + j))] * kernel[3 * (i + 1) + j + 1];
@@ -164,21 +105,21 @@ __global__ void apply_kernel_device(
         output_image[3 * (linearY * width + linearX)] = ceil(r);
         output_image[3 * (linearY * width + linearX) + 1] = ceil(g);
         output_image[3 * (linearY * width + linearX) + 2] = ceil(b);
-    }
-    /**
-     * Case when pixel is on the edge
-     */
-    else {
+
+    } else {
         output_image[3 * (linearY * width + linearX)] = input_image[3 * (linearY * width + linearX)];
         output_image[3 * (linearY * width + linearX) + 1] = input_image[3 * (linearY * width + linearX) + 1];
         output_image[3 * (linearY * width + linearX) + 2] = input_image[3 * (linearY * width + linearX) + 2];
     }
 }
 
-void apply_kernel(unsigned char* input_image, unsigned char* output_image, int width, int height, string filter) {
+void apply_kernel(unsigned char* input_image, unsigned char* output_image, int width, int height, int kernelId, float& calcTime, float& totalTime) {
     unsigned char* dev_input;
     unsigned char* dev_output;
     float* dev_kernel;
+
+    int size = kernels[kernelId].size();
+    float* kernel = kernels[kernelId].data();
 
     float ms_outer = 0;
     float ms_inner = 0;
@@ -197,20 +138,20 @@ void apply_kernel(unsigned char* input_image, unsigned char* output_image, int w
     getError(cudaMalloc((void **)&dev_input, 3 * width * height * sizeof(unsigned char)));
     getError(cudaMemcpy(dev_input, input_image, 3 * width * height * sizeof(unsigned char), cudaMemcpyHostToDevice));
 
-    getError(cudaMalloc((void **)&dev_kernel, sqr(kernels.at(filter).first) * sizeof(float)));
-    getError(cudaMemcpy(dev_kernel, kernels.at(filter).second, sqr(kernels.at(filter).first) * sizeof(float), cudaMemcpyHostToDevice));
+    getError(cudaMalloc((void **)&dev_kernel, size * sizeof(float)));
+    getError(cudaMemcpy(dev_kernel, kernel, size * sizeof(float), cudaMemcpyHostToDevice));
 
     getError(cudaMalloc((void **)&dev_output, 3 * width * height * sizeof(unsigned char)));
 
-    int blockDim = min(static_cast<int>(floor(sqrt(maxBlockSize))), min(maxBlockDimX, maxBlockDimY));
+    int blockDim = 32;
     int gridDimX = ceil(1.0 * width / blockDim);
     int gridDimY = ceil(1.0 * height / blockDim);
 
     if (gridDimX > maxGridDimX || gridDimY > maxGridDimY) {
-        throw runtime_error("Too big image");
+        throw runtime_error("Error! Image too big");
     }
 
-    printf("Device params: block size %d, grid x-dim %d, grid y-dim %d\n", blockDim, gridDimX, gridDimY);
+    printf("Sizes: block size %d, grid x-dim %d, grid y-dim %d\n", blockDim, gridDimX, gridDimY);
 
     dim3 blockDims(blockDim, blockDim, 1);
     dim3 gridDims(gridDimX, gridDimY, 1);
@@ -218,7 +159,7 @@ void apply_kernel(unsigned char* input_image, unsigned char* output_image, int w
     cudaEventRecord(start_inner);
     cudaEventSynchronize(start_inner);
 
-    apply_kernel_device<<<gridDims, blockDims>>>(dev_input, dev_output, width, height, dev_kernel, kernels.at(filter).first);
+    apply_kernel_device<<<gridDims, blockDims>>>(dev_input, dev_output, width, height, dev_kernel, (int)(sqrt(size)));
 
     cudaEventRecord(stop_inner);
     cudaEventSynchronize(stop_inner);
@@ -235,82 +176,84 @@ void apply_kernel(unsigned char* input_image, unsigned char* output_image, int w
     cudaEventElapsedTime(&ms_outer, start_outer, stop_outer);
 
     printf("GPU calculation time: %g ms\n", ms_inner);
-    printf("GPU calculation + transport time: %g ms\n", ms_outer);
+    printf("GPU total time: %g ms\n", ms_outer);
+
+    calcTime = ms_inner;
+    totalTime = ms_outer;
 }
 
 void loadCudaSettings() {
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, 0);
 
-    maxBlockSize = prop.maxThreadsPerBlock;
-    maxBlockDimX = prop.maxThreadsDim[0];
-    maxBlockDimY = prop.maxThreadsDim[1];
     maxGridDimX = prop.maxGridSize[0];
     maxGridDimY = prop.maxGridSize[1];
-
-    printf("CUDA block max size - %d\n", prop.maxThreadsPerBlock);
-    printf("CUDA block max dimensions - %d, %d, %d\n", prop.maxThreadsDim[0], prop.maxThreadsDim[1], prop.maxThreadsDim[2]);
-    printf("CUDA grid max dimensions - %d, %d, %d\n", prop.maxGridSize[0], prop.maxGridSize[1], prop.maxGridSize[2]);
 }
 
-void processImage(char* input_file, char* output_file, string filter) {
-    vector<unsigned char> in_image;
+void processImage(char* inFile, char* outFile, int kernel, float& calcTime, float& totalTime) {
+    vector<unsigned char> rgbaIn;
     unsigned int width, height;
 
-    unsigned error = lodepng::decode(in_image, width, height, input_file);
+    unsigned error = lodepng::decode(rgbaIn, width, height, inFile);
     if (error) {
         cout << "decoder error " << error << ": " << lodepng_error_text(error) << endl;
     }
 
-    unsigned char *input_image = new unsigned char[(in_image.size() * 3) / 4];
-    unsigned char *output_image = new unsigned char[(in_image.size() * 3) / 4];
+    unsigned char *rgbIn = new unsigned char[(rgbaIn.size() * 3) / 4];
+    unsigned char *rgbOut = new unsigned char[(rgbaIn.size() * 3) / 4];
     int inp_iterator = 0;
-    for (int i = 0; i < in_image.size(); ++i) {
+    for (int i = 0; i < rgbaIn.size(); ++i) {
         if ((i + 1) % 4 != 0) {
-            input_image[inp_iterator] = in_image.at(i);
-            output_image[inp_iterator] = 255;
+            rgbIn[inp_iterator] = rgbaIn.at(i);
+            rgbOut[inp_iterator] = 255;
             inp_iterator++;
         }
     }
 
     printf("Image size - %dx%d\n", width, height);
 
-    apply_kernel(input_image, output_image, width, height, filter);
+    apply_kernel(rgbIn, rgbOut, width, height, kernel, calcTime, totalTime);
 
     int out_iterator = 0;
-    vector<unsigned char> out_image(in_image.size());
+    vector<unsigned char> rgbaOut(rgbaIn.size());
     for (int i = 0; i < width * height * 3; ++i) {
-        out_image[out_iterator] = output_image[i];
+        rgbaOut[out_iterator] = rgbOut[i];
         out_iterator++;
         if ((i + 1) % 3 == 0) {
-            out_image[out_iterator] = 255;
+            rgbaOut[out_iterator] = 255;
             out_iterator++;
         }
     }
 
-    error = lodepng::encode(output_file, out_image, width, height);
+    error = lodepng::encode(outFile, rgbaOut, width, height);
 
     if (error) {
         printf("Encoder error: %s\n", lodepng_error_text(error));
     }
 
-    delete[] input_image;
-    delete[] output_image;
+    delete[] rgbIn;
+    delete[] rgbOut;
 }
 
-void parseArgs(int argc, char** argv, char** filter, char** imgType) {
+void parseArgs(int argc, char** argv, int* kernel, char** imgType) {
     if (argc != 3) {
-        printf("2 arguments required");
+        cout << "2 arguments required" << endl;
         exit(0);
     }
 
-    *filter = argv[1];
+    *kernel = atoi(argv[1]);
     *imgType = argv[2];
+
+    if (*kernel < 0 || *kernel > 2) {
+        cout << "Kernel idx must be in range [0,2]" << endl;
+        exit(0);
+    }
 }
 
 int main(int argc, char** argv) {
     vector<pair<char*, char*> > images;
-    char* kernel, *imgType;
+    char* imgType;
+    int kernel;
 
     parseArgs(argc, argv, &kernel, &imgType);
 
@@ -328,6 +271,7 @@ int main(int argc, char** argv) {
             strcpy(out, strOut.c_str());
             images.push_back({ in, out });
         }
+    
     } else {
         cout << "Invalid arguments" << endl;
         return 0;
@@ -335,13 +279,19 @@ int main(int argc, char** argv) {
 
     loadCudaSettings();
 
-    string str(kernel);
+    float calcTimeSum = 0, totalTimeSum = 0;
 
     for (int i = 0; i < images.size(); i++) {
         printf("Started processing image %s\n", images[i].first);
-        processImage(images[i].first, images[i].second, str);
+        float calcTime = 0, totalTime = 0;
+        processImage(images[i].first, images[i].second, kernel, calcTime, totalTime);
+        calcTimeSum += calcTime;
+        totalTimeSum += totalTime;
         printf("Finised. Output was written to %s\n", images[i].second);
     }
+
+    printf("Sum of calculation times - %g\n", calcTimeSum);
+    printf("Sum of total times - %g\n", totalTimeSum);
     
     return 0;
 }
