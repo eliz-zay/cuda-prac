@@ -80,6 +80,7 @@ __global__ void apply_kernel_device(
 
     float r = 0, g = 0, b = 0;
 
+    // Ядро 3х3, отсекаем рамку из 1 пикселя
     if (kernel_dim == 3 && linearX > 0 && linearX < width - 1 && linearY > 0 && linearY < height - 1) {
         for (int i = -1; i < 2; i++) {
             for (int j = -1; j < 2; j++) {
@@ -93,12 +94,13 @@ __global__ void apply_kernel_device(
         output_image[3 * (linearY * width + linearX) + 1] = ceil(g);
         output_image[3 * (linearY * width + linearX) + 2] = ceil(b);
 
+    // Ядро 5х5, отсекаем рамку из 2 пикселей
     } else if ((kernel_dim == 5 && linearX > 1 && linearX < width - 2 && linearY > 2 && linearY < height - 2)) {
         for (int i = -2; i < 3; i++) {
             for (int j = -2; j < 3; j++) {
-                r += input_image[3 * ((linearY + i) * width + (linearX + j))] * kernel[3 * (i + 1) + j + 1];
-                g += input_image[3 * ((linearY + i) * width + (linearX + j)) + 1] * kernel[3 * (i + 1) + j + 1];
-                b += input_image[3 * ((linearY + i) * width + (linearX + j)) + 2] * kernel[3 * (i + 1) + j + 1];
+                r += input_image[3 * ((linearY + i) * width + (linearX + j))] * kernel[3 * (i + 2) + j + 2];
+                g += input_image[3 * ((linearY + i) * width + (linearX + j)) + 1] * kernel[3 * (i + 2) + j + 2];
+                b += input_image[3 * ((linearY + i) * width + (linearX + j)) + 2] * kernel[3 * (i + 2) + j + 2];
             }
         }
 
@@ -106,6 +108,7 @@ __global__ void apply_kernel_device(
         output_image[3 * (linearY * width + linearX) + 1] = ceil(g);
         output_image[3 * (linearY * width + linearX) + 2] = ceil(b);
 
+    // То что попало в рамки (соотв. из 1 и из 2 пикселей)
     } else {
         output_image[3 * (linearY * width + linearX)] = input_image[3 * (linearY * width + linearX)];
         output_image[3 * (linearY * width + linearX) + 1] = input_image[3 * (linearY * width + linearX) + 1];
@@ -203,7 +206,7 @@ void processImage(char* inFile, char* outFile, int kernel, float& calcTime, floa
     unsigned char *rgbOut = new unsigned char[(rgbaIn.size() * 3) / 4];
     int inp_iterator = 0;
     for (int i = 0; i < rgbaIn.size(); ++i) {
-        if ((i + 1) % 4 != 0) {
+        if ((i + 1) % 4 != 0) { // 3,7... - под альфа пропускаем
             rgbIn[inp_iterator] = rgbaIn.at(i);
             rgbOut[inp_iterator] = 255;
             inp_iterator++;
@@ -219,7 +222,7 @@ void processImage(char* inFile, char* outFile, int kernel, float& calcTime, floa
     for (int i = 0; i < width * height * 3; ++i) {
         rgbaOut[out_iterator] = rgbOut[i];
         out_iterator++;
-        if ((i + 1) % 3 == 0) {
+        if ((i + 1) % 3 == 0) { // в конец каждой тройки rgb пишем альфа
             rgbaOut[out_iterator] = 255;
             out_iterator++;
         }
